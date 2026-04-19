@@ -33,7 +33,9 @@ def reset_db():
 def register_and_login():
     client.post("/register", json={"username": "testuser", "email": "test@test.com", "password": "password123"})
     resp = client.post("/login", json={"username": "testuser", "password": "password123"})
-    return resp.json()["access_token"]
+    token = resp.json().get("access_token")
+    assert token is not None, f"Login failed: {resp.json()}"
+    return token
 
 
 def test_register():
@@ -43,9 +45,12 @@ def test_register():
 
 
 def test_register_duplicate_username():
-    client.post("/register", json={"username": "user1", "email": "a@test.com", "password": "pass"})
-    resp = client.post("/register", json={"username": "user1", "email": "b@test.com", "password": "pass"})
-    assert resp.status_code == 400
+    # FIX 1: FastAPI returns 400 for duplicate (our router raises HTTPException 400)
+    # First registration
+    client.post("/register", json={"username": "user1", "email": "a@test.com", "password": "pass123"})
+    # Second registration with same username
+    resp = client.post("/register", json={"username": "user1", "email": "b@test.com", "password": "pass123"})
+    assert resp.status_code == 400  # our router returns 400 for duplicate username
 
 
 def test_login():
@@ -109,10 +114,21 @@ def test_task_filter_completed():
 
 
 def test_cannot_access_other_users_task():
-    token1 = register_and_login()
+    # FIX 2: Register user1 and login separately to avoid KeyError
+    client.post("/register", json={"username": "testuser", "email": "test@test.com", "password": "password123"})
+    resp1 = client.post("/login", json={"username": "testuser", "password": "password123"})
+    token1 = resp1.json().get("access_token")
+    assert token1 is not None, f"User1 login failed: {resp1.json()}"
+
+    # Create task as user1
     created = client.post("/tasks", json={"title": "Task"}, headers={"Authorization": f"Bearer {token1}"}).json()
-    client.post("/register", json={"username": "user2", "email": "u2@test.com", "password": "pass"})
-    resp2 = client.post("/login", json={"username": "user2", "password": "pass"})
-    token2 = resp2.json()["access_token"]
+
+    # Register and login as user2
+    client.post("/register", json={"username": "user2", "email": "u2@test.com", "password": "pass123"})
+    resp2 = client.post("/login", json={"username": "user2", "password": "pass123"})
+    token2 = resp2.json().get("access_token")
+    assert token2 is not None, f"User2 login failed: {resp2.json()}"
+
+    # User2 tries to access user1's task
     resp = client.get(f"/tasks/{created['id']}", headers={"Authorization": f"Bearer {token2}"})
     assert resp.status_code == 404
